@@ -169,6 +169,9 @@ def _default_target_configs():
             # Assume TRIM_NONLISTED_KMI="" in build.config.gki.aarch64.16k
             "trim_nonlisted_kmi": False,
             "page_size": "16k",
+            # Assume BUILD_GKI_ARTIFACTS=1
+            "build_gki_artifacts": True,
+            "gki_boot_img_sizes": gki_boot_img_sizes,
         }),
         "kernel_aarch64_interceptor": dicts.add(aarch64_common, {
             "enable_interceptor": True,
@@ -300,6 +303,13 @@ def define_common_kernels(
     ```
 
     This is equivalent to specifying `--use_prebuilt_gki=8077484` for all Bazel commands.
+
+    To include prebuilts for the `16k` variant make sure to include `gki_prebuilts_aarch64_16k`:
+    ```
+    # device.bazelrc
+    build --use_prebuilt_gki
+    build --action_env=KLEAF_DOWNLOAD_BUILD_NUMBER_MAP="gki_prebuilts=12742164,gki_prebuilts_aarch64_16k=12742164"
+    ```
 
     You may set `--use_signed_prebuilts` to download the signed boot images instead
     of the unsigned one. This requires `--use_prebuilt_gki` to be set to a signed build.
@@ -620,6 +630,7 @@ def _define_common_kernel(
         toolchain_version,
         visibility,
         enable_interceptor = None,
+        rewrite_absolute_paths_in_config = None,
         kmi_symbol_list = None,
         additional_kmi_symbol_lists = None,
         trim_nonlisted_kmi = None,
@@ -718,6 +729,7 @@ def _define_common_kernel(
         strip_modules = _STRIP_MODULES,
         toolchain_version = toolchain_version,
         keep_module_symvers = _KEEP_MODULE_SYMVERS,
+        rewrite_absolute_paths_in_config = rewrite_absolute_paths_in_config,
         kmi_symbol_list = kmi_symbol_list,
         additional_kmi_symbol_lists = additional_kmi_symbol_lists,
         trim_nonlisted_kmi = trim_nonlisted_kmi,
@@ -913,7 +925,7 @@ def _define_common_kernel(
 
     kernel_compile_commands(
         name = name + "_compile_commands",
-        kernel_build = name,
+        deps = [name],
     )
 
     kernel_kythe(

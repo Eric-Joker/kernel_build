@@ -195,6 +195,14 @@ fi
 
 ################################################################################
 # Discover where to put Android output
+if [ "${MXR_KERNEL}" == 1 ];then
+  if [ -n "$2" ]; then
+  LUNCH_TARGET="$2"
+  else
+  LUNCH_TARGET="${TARGET_PRODUCT}"
+  fi
+  ANDROID_KERNEL_OUT=${ANDROID_BUILD_TOP}/device/qcom/${LUNCH_TARGET}-kernel
+else
 if [ -z "${ANDROID_KERNEL_OUT}" ]; then
   if [ -z "${ANDROID_BUILD_TOP}" ]; then
     echo "ANDROID_BUILD_TOP is not set. Have you run lunch yet?" 1>&2
@@ -213,6 +221,7 @@ if [ -z "${ANDROID_KERNEL_OUT}" ]; then
     exit 1
   fi
 
+fi
 fi
 if [ ! -e ${ANDROID_KERNEL_OUT} ]; then
   mkdir -p ${ANDROID_KERNEL_OUT}
@@ -234,25 +243,30 @@ case "${TARGET_BUILD_VARIANT}" in
       ;;
 esac
 
-if [ -z "${KERNEL_TARGET}" ]; then
-  KERNEL_TARGET=${1:-${DEVICE_NAME}}
-fi
+if [ "${MXR_KERNEL}" != 1 ];then
+  if [ -z "${KERNEL_TARGET}" ]; then
+    KERNEL_TARGET=${1:-${DEVICE_NAME}}
+  fi
 
-if [ -z "${KERNEL_VARIANT}" ]; then
-  KERNEL_VARIANT=${2:-${TARGET_BUILD_KERNEL_VARIANT}}
-fi
+  if [ -z "${KERNEL_VARIANT}" ]; then
+    KERNEL_VARIANT=${2:-${TARGET_BUILD_KERNEL_VARIANT}}
+  fi
 
-case "${KERNEL_TARGET}" in
-  taro)
-    KERNEL_TARGET="waipio"
-    ;;
-  volcano)
-    KERNEL_TARGET="pineapple"
-    ;;
-  anorak61)
-    KERNEL_TARGET="anorak"
-    ;;
-esac
+  case "${KERNEL_TARGET}" in
+    taro)
+      KERNEL_TARGET="waipio"
+      ;;
+    volcano)
+      KERNEL_TARGET="pineapple"
+      ;;
+    anorak61)
+      KERNEL_TARGET="anorak"
+      ;;
+    neo61)
+      KERNEL_TARGET="neo-la"
+      ;;
+  esac
+fi
 
 ################################################################################
 # Configure LTO
@@ -263,6 +277,7 @@ fi
 ################################################################################
 # Create a build config used for this run of prepare_vendor
 # Temporary KP output directory so as to not accidentally touch a prebuilt KP output folder
+if [ "${MXR_KERNEL}" != 1 ];then
 export TEMP_KP_OUT_DIR=$(mktemp -d ${ANDROID_PRODUCT_OUT:+-p ${ANDROID_PRODUCT_OUT}})
 trap "rm -rf ${TEMP_KP_OUT_DIR}" exit
 (
@@ -313,15 +328,18 @@ fi
 set +x
 
 cp "${ROOT_DIR}/build.config" "${ANDROID_KERNEL_OUT}/build.config"
+fi
 
 # Make sure Bazel extensions are linked properly
 if [ ! -f "${ROOT_DIR}/build/msm_kernel_extensions.bzl" ] \
       && [ -f "${ROOT_DIR}/msm-kernel/msm_kernel_extensions.bzl" ]; then
   ln -fs "../msm-kernel/msm_kernel_extensions.bzl" "${ROOT_DIR}/build/msm_kernel_extensions.bzl"
 fi
+if [ "${MXR_KERNEL}" != 1 ];then
 if [ ! -f "${ROOT_DIR}/build/abl_extensions.bzl" ] \
       && [ -f "${ROOT_DIR}/bootable/bootloader/edk2/abl_extensions.bzl" ]; then
   ln -fs "../bootable/bootloader/edk2/abl_extensions.bzl" "${ROOT_DIR}/build/abl_extensions.bzl"
+fi
 fi
 
 # If prepare_vendor.sh fails and nobody checked the error code, make sure the android build fails
@@ -349,31 +367,35 @@ if [ "${RECOMPILE_KERNEL}" == "1" ]; then
 
   # shellcheck disable=SC2086
   "${ROOT_DIR}/build_with_bazel.py" \
-    -t "$KERNEL_TARGET" "$KERNEL_VARIANT" $LTO_KBUILD_ARG $EXTRA_KBUILD_ARGS --define=FACTORY_BUILD=${FACTORY_BUILD} --define=ENABLE_SYSTEM_MTBF=${ENABLE_SYSTEM_MTBF} --define=PLATFORM_SECURITY_PATCH=${PLATFORM_SECURITY_PATCH}\
+    -t "$KERNEL_TARGET" "$KERNEL_VARIANT" $LTO_KBUILD_ARG $EXTRA_KBUILD_ARGS --define=FACTORY_BUILD=${FACTORY_BUILD} --define=ENABLE_SYSTEM_MTBF=${ENABLE_SYSTEM_MTBF} --define=PLATFORM_SECURITY_PATCH=${PLATFORM_SECURITY_PATCH} \
     $OKI_ARG \
-    --out_dir "${ANDROID_KP_OUT_DIR}"
+    --out_dir "${ANDROID_KP_OUT_DIR}" \
+    --target_build_variant "${TARGET_BUILD_VARIANT}"
 
   COPY_NEEDED=1
 fi
 
 ################################################################################
 # Set up recompile and copy variables for edk2
+if [ "${MXR_KERNEL}" != 1 ];then
 ANDROID_ABL_OUT_DIR=${ANDROID_KERNEL_OUT}/kernel-abl
 
 
 if [ "${KERNEL_TARGET}" == "autoghgvm" ]; then
   ABL_IMAGE=LinuxLoader.efi
+  DIST_ABL_IMAGE=LinuxLoader_${TARGET_BUILD_VARIANT}.efi
 else
   ABL_IMAGE=unsigned_abl.elf
+  DIST_ABL_IMAGE=unsigned_abl_${TARGET_BUILD_VARIANT}.elf
 fi
 
 if [ ! -e "${ANDROID_ABL_OUT_DIR}/abl-${TARGET_BUILD_VARIANT}/${ABL_IMAGE}" ] || \
     ! diff -q "${ANDROID_ABL_OUT_DIR}/abl-${TARGET_BUILD_VARIANT}/${ABL_IMAGE}" \
-  "${ANDROID_KP_OUT_DIR}/dist/unsigned_abl_${TARGET_BUILD_VARIANT}.elf" ; then
+  "${ANDROID_KP_OUT_DIR}/dist/${DIST_ABL_IMAGE}" ; then
   COPY_ABL_NEEDED=1
 fi
 
-if [ ! -e "${ANDROID_KP_OUT_DIR}/dist/unsigned_abl_${TARGET_BUILD_VARIANT}.elf" ] && \
+if [ ! -e "${ANDROID_KP_OUT_DIR}/dist/${DIST_ABL_IMAGE}" ] && \
    [ "${COPY_ABL_NEEDED}" == "1" ]; then
   RECOMPILE_ABL=1
 fi
@@ -384,7 +406,7 @@ fi
 
 ################################################################################
 if [ "${RECOMPILE_ABL}" == "1" ] && [ -n "${TARGET_BUILD_VARIANT}" ] && \
-   [ "${KERNEL_TARGET}" != "autogvm" ]; then
+   [ "${KERNEL_TARGET}" != "autogvm" ] && [ "${KERNEL_TARGET}" != "autoghgvm" ]; then
   echo
   echo "  Recompiling edk2"
 
@@ -577,9 +599,32 @@ if [ "${COPY_ABL_NEEDED}" == "1" ]; then
     done
   done
 fi
+fi
 
 ################################################################################
+if [[ "$MXR_KERNEL" == "1" ]]; then
+  echo
+  echo "  cleaning up kernel_platform tree for Android"
+  echo "MXR_KERNEL is enabled"
+#Compile kernel by default as there is no Kernel SI.
+# echo " Compiling build_${TARGET}.sh.."
+# cd "${ROOT_DIR}"
+# ./build_${KERNEL_TARGET}.sh $LTO_KBUILD_ARG
+# KERNEL_OUT_DIR="$(find out/ -maxdepth 1 -type d -name "android*")"
+# KERNEL_OUT_DEVICE_NAME="$(echo "${KERNEL_OUT_DIR}" | cut -d'/' -f2)"
+# mkdir -p "${ANDROID_KERNEL_OUT}/${KERNEL_OUT_DEVICE_NAME}"
+# TARGET_KERNEL_OUT_DIR="${KERNEL_OUT_DIR}/android"
+# cp -rf "${TARGET_KERNEL_OUT_DIR}"/* "${ANDROID_KERNEL_OUT}/${KERNEL_OUT_DEVICE_NAME}"
 
+set -x
+find "${ROOT_DIR}" \( -name Android.mk -o -name Android.bp \) \
+-a -not -path "${ROOT_DIR}/common/Android.bp" -a -not -path "${ROOT_DIR}/msm-kernel/Android.bp" \
+		-delete
+set +x
+fi
+################################################################################
+
+if [[ "$MXR_KERNEL" != "1" ]]; then
 if [ -n "${ANDROID_PRODUCT_OUT}" ] && [ -n "${ANDROID_BUILD_TOP}" ]; then
   ANDROID_TO_KP=$(rel_path ${ROOT_DIR} ${ANDROID_BUILD_TOP})
   KP_TO_ANDROID=$(rel_path ${ANDROID_BUILD_TOP} ${ROOT_DIR})
@@ -672,3 +717,7 @@ if [ -n "${ANDROID_PRODUCT_OUT}" ] && [ -n "${ANDROID_BUILD_TOP}" ]; then
       ${ANDROID_KERNEL_OUT}/dtbs
   )
 fi
+fi
+
+# remove bazel dir to avoid build issues
+rm -rf ${ANDROID_BUILD_TOP}/kernel_platform/out/bazel
