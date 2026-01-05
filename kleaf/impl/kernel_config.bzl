@@ -597,7 +597,7 @@ def _kernel_config_impl(ctx):
         ),
         command = command,
         execution_requirements = kernel_utils.local_exec_requirements(ctx),
-        env = {"FACTORY_BUILD": ctx.var["FACTORY_BUILD"]},
+        env = {"FACTORY_BUILD": ctx.var.get("FACTORY_BUILD", "0")},
     )
 
     post_setup_deps = [out_dir, localversion_file] + reconfig.extra_post_setup_deps
